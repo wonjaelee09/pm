@@ -12,8 +12,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const mockFetch = vi.fn;
-
 const defaultProps = {
   board: initialData,
   onBoardRefresh: vi.fn().mockResolvedValue(undefined),

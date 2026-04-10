@@ -15,6 +15,8 @@ export type BoardData = {
   cards: Record<string, Card>;
 };
 
+// Test fixture only — not used in production code paths.
+// Must stay in sync with INITIAL_BOARD in backend/database.py.
 export const initialData: BoardData = {
   columns: [
     { id: "col-backlog", title: "Backlog", cardIds: ["card-1", "card-2"] },

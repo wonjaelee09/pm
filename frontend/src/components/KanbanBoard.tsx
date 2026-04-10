@@ -23,12 +23,14 @@ async function fetchBoard(): Promise<BoardData> {
   return res.json();
 }
 
-function saveBoard(board: BoardData): void {
-  fetch("/api/board", {
+// H1: saveBoard is now async and throws on failure so callers can handle errors
+async function saveBoard(board: BoardData): Promise<void> {
+  const res = await fetch("/api/board", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(board),
   });
+  if (!res.ok) throw new Error("Failed to save board");
 }
 
 export const KanbanBoard = () => {
@@ -50,9 +52,14 @@ export const KanbanBoard = () => {
       .catch(() => setError("Could not load board. Please refresh."));
   }, []);
 
+  // M4: refreshBoard now catches fetch failures rather than propagating uncaught
   const refreshBoard = async () => {
-    const updated = await fetchBoard();
-    setBoard(updated);
+    try {
+      const updated = await fetchBoard();
+      setBoard(updated);
+    } catch {
+      setError("Failed to refresh board after AI update. Please refresh the page.");
+    }
   };
 
   const handleLogout = async () => {
@@ -72,69 +79,60 @@ export const KanbanBoard = () => {
 
     if (!over || active.id === over.id || !board) return;
 
-    setBoard((prev) => {
-      if (!prev) return prev;
-      const updated = {
-        ...prev,
-        columns: moveCard(prev.columns, active.id as string, over.id as string),
-      };
-      saveBoard(updated);
-      return updated;
-    });
+    const updated = {
+      ...board,
+      columns: moveCard(board.columns, active.id as string, over.id as string),
+    };
+    setBoard(updated);
+    saveBoard(updated).catch(() => setError("Failed to save. Please refresh."));
   };
 
   const handleRenameColumn = (columnId: string, title: string) => {
-    setBoard((prev) => {
-      if (!prev) return prev;
-      const updated = {
-        ...prev,
-        columns: prev.columns.map((col) =>
-          col.id === columnId ? { ...col, title } : col
-        ),
-      };
-      saveBoard(updated);
-      return updated;
-    });
+    if (!board) return;
+    const updated = {
+      ...board,
+      columns: board.columns.map((col) =>
+        col.id === columnId ? { ...col, title } : col
+      ),
+    };
+    setBoard(updated);
+    saveBoard(updated).catch(() => setError("Failed to save. Please refresh."));
   };
 
   const handleAddCard = (columnId: string, title: string, details: string) => {
-    setBoard((prev) => {
-      if (!prev) return prev;
-      const id = createId("card");
-      const updated = {
-        ...prev,
-        cards: {
-          ...prev.cards,
-          [id]: { id, title, details: details || "No details yet." },
-        },
-        columns: prev.columns.map((col) =>
-          col.id === columnId
-            ? { ...col, cardIds: [...col.cardIds, id] }
-            : col
-        ),
-      };
-      saveBoard(updated);
-      return updated;
-    });
+    if (!board) return;
+    const id = createId("card");
+    const updated = {
+      ...board,
+      cards: {
+        ...board.cards,
+        [id]: { id, title, details: details || "No details yet." },
+      },
+      columns: board.columns.map((col) =>
+        col.id === columnId
+          ? { ...col, cardIds: [...col.cardIds, id] }
+          : col
+      ),
+    };
+    setBoard(updated);
+    saveBoard(updated).catch(() => setError("Failed to save. Please refresh."));
   };
 
   const handleDeleteCard = (columnId: string, cardId: string) => {
-    setBoard((prev) => {
-      if (!prev) return prev;
-      const updated = {
-        ...prev,
-        cards: Object.fromEntries(
-          Object.entries(prev.cards).filter(([id]) => id !== cardId)
-        ),
-        columns: prev.columns.map((col) =>
-          col.id === columnId
-            ? { ...col, cardIds: col.cardIds.filter((id) => id !== cardId) }
-            : col
-        ),
-      };
-      saveBoard(updated);
-      return updated;
-    });
+    if (!board) return;
+    const updated = {
+      ...board,
+      cards: Object.fromEntries(
+        Object.entries(board.cards).filter(([id]) => id !== cardId)
+      ),
+      columns: board.columns.map((col) =>
+        col.id === columnId
+          ? { ...col, cardIds: col.cardIds.filter((id) => id !== cardId) }
+          : col
+      ),
+    };
+    setBoard(updated);
+    saveBoard(updated).catch(() => setError("Failed to save. Please refresh."));
   };
 
   const activeCard = activeCardId ? cardsById[activeCardId] : null;

@@ -4,6 +4,7 @@ import sqlite3
 
 DB_PATH = os.getenv("DB_PATH", "kanban.db")
 
+# M7: must stay in sync with initialData in frontend/src/lib/kanban.ts (used as test fixture)
 INITIAL_BOARD = {
     "columns": [
         {"id": "col-backlog", "title": "Backlog", "cardIds": ["card-1", "card-2"]},

@@ -1,5 +1,8 @@
 import os
+import secrets
+import sys
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -10,7 +13,21 @@ import database
 from ai import chat as ai_chat
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+REAL_STATIC_DIR = os.path.realpath(STATIC_DIR)
+
+# H2: warn and generate a random key rather than silently using a weak default
+_env_key = os.getenv("SECRET_KEY")
+if not _env_key:
+    print(
+        "WARNING: SECRET_KEY not set; using a random key. Sessions will not persist across restarts.",
+        file=sys.stderr,
+    )
+    _env_key = secrets.token_hex(32)
+SECRET_KEY = _env_key
+
+# M6: allow https_only to be enabled via env var for HTTPS deployments
+HTTPS_ONLY = os.getenv("HTTPS_ONLY", "false").lower() == "true"
+
 USERNAME = "user"
 PASSWORD = "password"
 
@@ -22,7 +39,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, https_only=HTTPS_ONLY)
 
 
 # --- helpers ---
@@ -34,12 +51,43 @@ def _require_auth(request: Request) -> str:
     return user
 
 
-# --- auth ---
+# --- models ---
 
 class LoginRequest(BaseModel):
     username: str
     password: str
 
+
+class CardModel(BaseModel):
+    id: str
+    title: str
+    details: str
+
+
+class ColumnModel(BaseModel):
+    id: str
+    title: str
+    cardIds: list[str]
+
+
+# M2: typed board model so PUT /api/board validates structure before hitting the handler
+class BoardDataModel(BaseModel):
+    columns: list[ColumnModel]
+    cards: dict[str, CardModel]
+
+
+# M3: typed history so invalid role values are rejected with 422
+class HistoryMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[HistoryMessage] = []
+
+
+# --- auth ---
 
 @app.post("/api/auth/login")
 def login(body: LoginRequest, request: Request):
@@ -77,31 +125,28 @@ def get_board(request: Request):
 
 
 @app.put("/api/board")
-async def put_board(request: Request):
+def put_board(body: BoardDataModel, request: Request):
     user = _require_auth(request)
-    data = await request.json()
-    database.save_board(user, data)
+    database.save_board(user, body.model_dump())
     return {"ok": True}
 
 
 # --- ai ---
 
-class ChatRequest(BaseModel):
-    message: str
-    history: list[dict] = []
-
-
+# M1: /api/ai/test now requires auth to prevent unauthenticated API spend
 @app.post("/api/ai/test")
-def ai_test():
+def ai_test(request: Request):
+    _require_auth(request)
     response = ai_chat("What is 2+2?", [], {})
     return {"response": response.message}
 
 
 @app.post("/api/ai/chat")
-async def ai_chat_route(body: ChatRequest, request: Request):
+def ai_chat_route(body: ChatRequest, request: Request):
     user = _require_auth(request)
     board = database.get_board(user)
-    response = ai_chat(body.message, body.history, board)
+    history = [{"role": m.role, "content": m.content} for m in body.history]
+    response = ai_chat(body.message, history, board)
     if response.board_update is not None:
         database.save_board(user, response.board_update)
     return {"message": response.message, "board_updated": response.board_update is not None}
@@ -111,10 +156,13 @@ async def ai_chat_route(body: ChatRequest, request: Request):
 
 @app.get("/{full_path:path}")
 def serve_frontend(full_path: str):
-    candidate = os.path.join(STATIC_DIR, full_path)
+    # M5: guard against path traversal by verifying the resolved path stays within STATIC_DIR
+    candidate = os.path.realpath(os.path.join(STATIC_DIR, full_path))
+    if not (candidate == REAL_STATIC_DIR or candidate.startswith(REAL_STATIC_DIR + os.sep)):
+        return FileResponse(os.path.join(STATIC_DIR, "index.html"))
     if os.path.isfile(candidate):
         return FileResponse(candidate)
-    index = os.path.join(STATIC_DIR, full_path, "index.html")
-    if os.path.isfile(index):
+    index = os.path.realpath(os.path.join(STATIC_DIR, full_path, "index.html"))
+    if os.path.isfile(index) and index.startswith(REAL_STATIC_DIR):
         return FileResponse(index)
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))

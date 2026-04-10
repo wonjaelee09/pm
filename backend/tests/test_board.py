@@ -39,7 +39,7 @@ def test_get_board_returns_initial_data(auth_client):
 
 
 def test_put_board_unauthenticated(client):
-    res = client.put("/api/board", json={})
+    res = client.put("/api/board", json={"columns": [], "cards": {}})
     assert res.status_code == 401
 
 
